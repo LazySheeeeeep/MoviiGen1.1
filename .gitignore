@@ -26,8 +26,9 @@ samples/
 *DS_Store
 cache_dir/
 data/
-output/
 outputs
 outputs/
 models/
 debug/
+OpenVid-1M/
+MoviiGen1.1/
