@@ -32,3 +32,5 @@ models/
 debug/
 OpenVid-1M/
 MoviiGen1.1/
+dataset/OpenVidHD*/
+i2v_ckpts/

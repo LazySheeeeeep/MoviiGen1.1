@@ -493,7 +493,7 @@ class T5EncoderModel:
             dtype=dtype,
             device=device).eval().requires_grad_(False)
         logging.info(f'loading {checkpoint_path}')
-        model.load_state_dict(torch.load(checkpoint_path, map_location='cpu', weights_only=True))
+        model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
         self.model = model
         if shard_fn is not None:
             self.model = shard_fn(self.model, sync_module_states=False)
@@ -506,12 +506,7 @@ class T5EncoderModel:
     def __call__(self, texts, device):
         ids, mask = self.tokenizer(
             texts, return_mask=True, add_special_tokens=True)
-        try:
-            ids = ids.to(device)
-        except Exception as e:
-            print(texts)
-            print(e)
-
+        ids = ids.to(device)
         mask = mask.to(device)
         seq_lens = mask.gt(0).sum(dim=1).long()
         context = self.model(ids, mask)

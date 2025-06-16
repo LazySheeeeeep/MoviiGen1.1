@@ -19,7 +19,10 @@ class LatentDataset(Dataset):
         seed=42,
         resolution_mix=None,
         resolution_mix_p=0.2,
+        dataset_type='t2v',
     ):
+        assert dataset_type in ['t2v', 'i2v'], "Only support T2V or I2V task."
+        self.dataset_type = dataset_type
         # data_merge_path: video_dir, latent_dir, prompt_embed_dir, json_path
         self.json_path = json_path
         self.cfg_rate = cfg_rate
@@ -28,6 +31,10 @@ class LatentDataset(Dataset):
         self.latent_dir = os.path.join(self.datase_dir_path, "latent")
         self.prompt_embed_dir = os.path.join(self.datase_dir_path, "prompt_embed")
         self.prompt_attention_mask_dir = os.path.join(self.datase_dir_path, "prompt_attention_mask")
+
+        if self.dataset_type == 'i2v':
+            self.y_dir = os.path.join(self.datase_dir_path, "y")
+            self.clip_fea_dir = os.path.join(self.datase_dir_path, "clip_feature")
 
         with open(self.json_path, "r") as f:
             data_annos = json.load(f)
@@ -135,7 +142,27 @@ class LatentDataset(Dataset):
             else:
                 prompt_attention_mask = torch.ones(orig_len, dtype=torch.long)
         # print(latent.shape, prompt_embed.shape, prompt_attention_mask.shape)
-        return latent, prompt_embed, prompt_attention_mask
+
+        if self.dataset_type == 'i2v':
+            y_file = self.data_anno[idx]["y_path"]
+            clip_fea_file = self.data_anno[idx]["clip_feature_path"]
+
+            y = torch.load(
+                os.path.join(self.y_dir, y_file),
+                map_location="cpu",
+                weights_only=True,
+            )
+
+            clip_fea = torch.load(
+                os.path.join(self.clip_fea_dir, clip_fea_file),
+                map_location="cpu",
+                weights_only=True,
+            )
+
+        if self.dataset_type == 'i2v':
+            return latent, prompt_embed, prompt_attention_mask, y, clip_fea
+        else:
+            return latent, prompt_embed, prompt_attention_mask
 
     def __len__(self):
         return len(self.data_anno)
@@ -180,6 +207,106 @@ def latent_collate_function(batch):
     latents = torch.stack(latents, dim=0)
 
     return latents, prompt_embeds, latent_attn_mask, prompt_attention_masks
+
+def i2v_latent_collate_function(batch):
+    """
+    Collate function that handles both T2V and I2V training data.
+    
+    T2V batch format: (latent, prompt_embed, prompt_attention_mask)
+    I2V batch format: (latent, prompt_embed, prompt_attention_mask, y, clip_fea)
+    """
+    
+    # 检查batch格式
+    if len(batch[0]) == 5:  # I2V格式
+        latents, prompt_embeds, prompt_attention_masks, y_tensors, clip_features = zip(*batch)
+        has_i2v_data = True
+    elif len(batch[0]) == 3:  # T2V格式
+        latents, prompt_embeds, prompt_attention_masks = zip(*batch)
+        has_i2v_data = False
+        y_tensors = None
+        clip_features = None
+    else:
+        raise ValueError(f"Unexpected batch format with {len(batch[0])} elements")
+    
+    # === 处理video latents (保持与原来一致) ===
+    max_t = max([latent.shape[1] for latent in latents])
+    max_h = max([latent.shape[2] for latent in latents])
+    max_w = max([latent.shape[3] for latent in latents])
+    
+    # Padding video latents (和原来完全一样)
+    padded_latents = [
+        torch.nn.functional.pad(
+            latent,
+            (
+                0, max_w - latent.shape[3],  # width padding
+                0, max_h - latent.shape[2],  # height padding
+                0, max_t - latent.shape[1],  # time padding
+            ),
+        ) for latent in latents
+    ]
+    
+    # 创建video latents的attention mask (和原来完全一样)
+    latent_attn_mask = torch.ones(len(latents), max_t, max_h, max_w)
+    for i, latent in enumerate(latents):
+        latent_attn_mask[i, latent.shape[1]:, :, :] = 0  # time dimension
+        latent_attn_mask[i, :, latent.shape[2]:, :] = 0  # height dimension
+        latent_attn_mask[i, :, :, latent.shape[3]:] = 0  # width dimension
+    
+    # === 处理text embeddings (和原来完全一样) ===
+    prompt_embeds = torch.stack(prompt_embeds, dim=0)
+    prompt_attention_masks = torch.stack(prompt_attention_masks, dim=0)
+    
+    # === 处理I2V特有数据（如果存在） ===
+    if has_i2v_data:
+        # 处理y tensors (reference image latents)
+        max_y_t = max([y.shape[1] for y in y_tensors])
+        max_y_h = max([y.shape[2] for y in y_tensors])
+        max_y_w = max([y.shape[3] for y in y_tensors])
+        
+        padded_y_tensors = [
+            torch.nn.functional.pad(
+                y,
+                (
+                    0, max_y_w - y.shape[3],  # width
+                    0, max_y_h - y.shape[2],  # height
+                    0, max_y_t - y.shape[1],  # time
+                ),
+            ) for y in y_tensors
+        ]
+        
+        # 创建y tensors的attention mask
+        y_attn_mask = torch.ones(len(y_tensors), max_y_t, max_y_h, max_y_w)
+        for i, y in enumerate(y_tensors):
+            y_attn_mask[i, y.shape[1]:, :, :] = 0  # time
+            y_attn_mask[i, :, y.shape[2]:, :] = 0  # height
+            y_attn_mask[i, :, :, y.shape[3]:] = 0  # width
+        
+        # 处理CLIP features (通常是固定尺寸，直接stack)
+        clip_features = torch.stack(clip_features, dim=0)
+        
+        # Stack所有数据
+        latents_stacked = torch.stack(padded_latents, dim=0)
+        y_tensors_stacked = torch.stack(padded_y_tensors, dim=0)
+        
+        return (
+            latents_stacked,           # [B, C, T, H, W] - video latents
+            prompt_embeds,             # [B, L, D] - text embeddings
+            latent_attn_mask,          # [B, T, H, W] - video attention mask
+            prompt_attention_masks,    # [B, L] - text attention mask
+            y_tensors_stacked,         # [B, C, T, H, W] - reference image latents
+            y_attn_mask,              # [B, T, H, W] - reference image attention mask
+            clip_features,             # [B, D] - CLIP features
+        )
+    else:
+        # T2V格式
+        latents_stacked = torch.stack(padded_latents, dim=0)
+        
+        return (
+            latents_stacked,           # [B, C, T, H, W] - video latents
+            prompt_embeds,             # [B, L, D] - text embeddings  
+            latent_attn_mask,          # [B, T, H, W] - video attention mask
+            prompt_attention_masks,    # [B, L] - text attention mask
+        )
 
 
 if __name__ == "__main__":

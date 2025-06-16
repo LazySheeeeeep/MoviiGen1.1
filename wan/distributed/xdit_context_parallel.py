@@ -1,8 +1,9 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import torch
-import torch.amp as amp
-
-from xfuser.core.distributed import get_sequence_parallel_rank, get_sequence_parallel_world_size, get_sp_group
+import torch.cuda.amp as amp
+from xfuser.core.distributed import (get_sequence_parallel_rank,
+                                     get_sequence_parallel_world_size,
+                                     get_sp_group)
 from xfuser.core.long_ctx_attention import xFuserLongContextAttention
 
 from ..modules.model import sinusoidal_embedding_1d
@@ -21,7 +22,7 @@ def pad_freqs(original_tensor, target_len):
     return padded_tensor
 
 
-@amp.autocast("cuda", enabled=False)
+@amp.autocast(enabled=False)
 def rope_apply(x, grid_sizes, freqs):
     """
     x:          [B, L, N, C].
@@ -45,7 +46,7 @@ def rope_apply(x, grid_sizes, freqs):
             freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
             freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
         ],
-            dim=-1).reshape(seq_len, 1, -1)
+                            dim=-1).reshape(seq_len, 1, -1)
 
         # apply rotary embedding
         sp_size = get_sequence_parallel_world_size()
@@ -100,15 +101,9 @@ def usp_dit_forward(
     ])
 
     # time embeddings
-    with amp.autocast("cuda", dtype=torch.float32):
+    with amp.autocast(dtype=torch.float32):
         e = self.time_embedding(
             sinusoidal_embedding_1d(self.freq_dim, t).float())
-
-        if guidance is not None and self.guidance_embedding is not None:
-            guidance_input = sinusoidal_embedding_1d(self.freq_dim, guidance).float()
-            guidance_emb = self.guidance_embedding(guidance_input)
-            e = e + guidance_emb
-
         e0 = self.time_projection(e).unflatten(1, (6, self.dim))
         assert e.dtype == torch.float32 and e0.dtype == torch.float32
 

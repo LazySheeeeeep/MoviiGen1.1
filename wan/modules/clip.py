@@ -35,7 +35,7 @@ def pos_interpolate(pos, seq_len):
                 mode='bicubic',
                 align_corners=False).flatten(2).transpose(1, 2)
         ],
-            dim=1)
+                         dim=1)
 
 
 class QuickGELU(nn.Module):
@@ -537,6 +537,6 @@ class CLIPModel:
         videos = self.transforms.transforms[-1](videos.mul_(0.5).add_(0.5))
 
         # forward
-        with torch.amp.autocast("cuda", dtype=self.dtype):
+        with torch.cuda.amp.autocast(dtype=self.dtype):
             out = self.model.visual(videos, use_31_block=True)
             return out

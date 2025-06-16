@@ -88,12 +88,11 @@ class WanT2V:
         self.model.eval().requires_grad_(False)
 
         if use_usp:
-            from xfuser.core.distributed import get_sequence_parallel_world_size
+            from xfuser.core.distributed import \
+                get_sequence_parallel_world_size
 
-            from .distributed.xdit_context_parallel import (
-                usp_attn_forward,
-                usp_dit_forward,
-            )
+            from .distributed.xdit_context_parallel import (usp_attn_forward,
+                                                            usp_dit_forward)
             for block in self.model.blocks:
                 block.self_attn.forward = types.MethodType(
                     usp_attn_forward, block.self_attn)

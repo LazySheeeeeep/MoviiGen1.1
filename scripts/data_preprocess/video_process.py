@@ -7,6 +7,7 @@ import sys
 from typing import Any, Dict, List
 
 import cv2
+from tqdm import tqdm
 
 
 def get_video_metadata(video_path: str) -> Dict[str, Any]:
@@ -68,9 +69,14 @@ def main(src_dir: str, output_path: str = 'output.json'):
             continue
         
         # 处理视频文件
-        for video_path in glob.glob(os.path.join(root, '*.mp4')):
+        video_paths = glob.glob(os.path.join(root, '*.mp4'))
+        print(f"正在处理 {len(video_paths)} 个视频文件（路径：{root}）")
+
+        for video_path in tqdm(video_paths, desc="Processing", unit="video"):
             filename = os.path.basename(video_path)
             desc = filename_map.get(filename, "")
+            if not desc:
+                continue
             
             try:
                 metadata = get_video_metadata(video_path)
@@ -91,7 +97,7 @@ def main(src_dir: str, output_path: str = 'output.json'):
                 "duration": metadata['duration'],
                 "cap": [desc] if desc else []
             })
-    
+
     # 写入JSON文件
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, indent=2, ensure_ascii=False)

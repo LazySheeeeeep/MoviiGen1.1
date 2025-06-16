@@ -2,7 +2,7 @@
 import math
 
 import torch
-import torch.amp as amp
+import torch.cuda.amp as amp
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
@@ -25,7 +25,7 @@ def sinusoidal_embedding_1d(dim, position):
     return x
 
 
-@amp.autocast("cuda", enabled=False)
+@amp.autocast(enabled=False)
 def rope_params(max_seq_len, dim, theta=10000):
     assert dim % 2 == 0
     freqs = torch.outer(
@@ -36,7 +36,7 @@ def rope_params(max_seq_len, dim, theta=10000):
     return freqs
 
 
-@amp.autocast("cuda", enabled=False)
+@amp.autocast(enabled=False)
 def rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
 
@@ -56,7 +56,7 @@ def rope_apply(x, grid_sizes, freqs):
             freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
             freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
         ],
-            dim=-1).reshape(seq_len, 1, -1)
+                            dim=-1).reshape(seq_len, 1, -1)
 
         # apply rotary embedding
         x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
@@ -290,7 +290,7 @@ class WanAttentionBlock(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         assert e.dtype == torch.float32
-        with amp.autocast("cuda", dtype=torch.float32):
+        with amp.autocast(dtype=torch.float32):
             e = (self.modulation + e).chunk(6, dim=1)
         assert e[0].dtype == torch.float32
 
@@ -298,14 +298,14 @@ class WanAttentionBlock(nn.Module):
         y = self.self_attn(
             self.norm1(x).float() * (1 + e[1]) + e[0], seq_lens, grid_sizes,
             freqs)
-        with amp.autocast("cuda", dtype=torch.float32):
+        with amp.autocast(dtype=torch.float32):
             x = x + y * e[2]
 
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e):
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
             y = self.ffn(self.norm2(x).float() * (1 + e[4]) + e[3])
-            with amp.autocast("cuda", dtype=torch.float32):
+            with amp.autocast(dtype=torch.float32):
                 x = x + y * e[5]
             return x
 
@@ -337,7 +337,7 @@ class Head(nn.Module):
             e(Tensor): Shape [B, C]
         """
         assert e.dtype == torch.float32
-        with amp.autocast("cuda", dtype=torch.float32):
+        with amp.autocast(dtype=torch.float32):
             e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
             x = (self.head(self.norm(x) * (1 + e[1]) + e[0]))
         return x
@@ -443,11 +443,7 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # embeddings
         self.patch_embedding = nn.Conv3d(
-            in_dim,
-            dim,
-            kernel_size=patch_size,
-            stride=patch_size,
-        )
+            in_dim, dim, kernel_size=patch_size, stride=patch_size)
         self.text_embedding = nn.Sequential(
             nn.Linear(text_dim, dim), nn.GELU(approximate='tanh'),
             nn.Linear(dim, dim))
@@ -475,7 +471,7 @@ class WanModel(ModelMixin, ConfigMixin):
             rope_params(1024, 2 * (d // 6)),
             rope_params(1024, 2 * (d // 6))
         ],
-            dim=1)
+                               dim=1)
 
         if model_type == 'i2v':
             self.img_emb = MLPProj(1280, dim)
@@ -524,8 +520,6 @@ class WanModel(ModelMixin, ConfigMixin):
             x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
 
         # embeddings
-        original_shapes = [u.shape[1:] for u in x]  # Store F, H, W
-
         x = [self.patch_embedding(u.unsqueeze(0)) for u in x]
         grid_sizes = torch.stack(
             [torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
@@ -538,7 +532,7 @@ class WanModel(ModelMixin, ConfigMixin):
         ])
 
         # time embeddings
-        with amp.autocast("cuda", dtype=torch.float32):
+        with amp.autocast(dtype=torch.float32):
             e = self.time_embedding(
                 sinusoidal_embedding_1d(self.freq_dim, t).float())
             e0 = self.time_projection(e).unflatten(1, (6, self.dim))
@@ -573,12 +567,10 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.head(x, e)
 
         # unpatchify
-        # x = self.unpatchify(x, grid_sizes, original_shapes=original_shapes)
         x = self.unpatchify(x, grid_sizes)
-
         return [u.float() for u in x]
 
-    def unpatchify(self, x, grid_sizes, original_shapes=None):
+    def unpatchify(self, x, grid_sizes):
         r"""
         Reconstruct video tensors from patch embeddings.
 
@@ -596,16 +588,11 @@ class WanModel(ModelMixin, ConfigMixin):
 
         c = self.out_dim
         out = []
-        for idx, (u, v) in enumerate(zip(x, grid_sizes.tolist())):
+        for u, v in zip(x, grid_sizes.tolist()):
             u = u[:math.prod(v)].view(*v, *self.patch_size, c)
             u = torch.einsum('fhwpqrc->cfphqwr', u)
             u = u.reshape(c, *[i * j for i, j in zip(v, self.patch_size)])
-
-            if original_shapes is not None:
-                original_H = original_shapes[idx][1]
-                u = u[:, :, :original_H, :]
             out.append(u)
-
         return out
 
     def init_weights(self):

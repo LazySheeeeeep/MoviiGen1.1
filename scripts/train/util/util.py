@@ -8,8 +8,8 @@ from torch.nn import functional as F
 from scripts.train.model.model_seq import WanModel
 
 
-def load_wan(config, checkpoint_dir, device_id, rank, weight_path=None):
-    transformers = WanModel.from_pretrained(checkpoint_dir)
+def load_wan(config, checkpoint_dir, device_id, rank, weight_path=None, model_type='t2v'):
+    transformers = WanModel.from_pretrained(checkpoint_dir, model_type=model_type)
     if weight_path:
         state_dict = load_weights(weight_path)
         result = transformers.load_state_dict(state_dict, strict=True)

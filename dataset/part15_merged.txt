@@ -1,0 +1,1 @@
+/dataset-v2/yy/MoviiGen1.1/dataset/OpenVidHD_part15,/dataset-v2/yy/MoviiGen1.1/dataset/part15_train_info.json

@@ -315,7 +315,7 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         sigma = self.sigmas[self.step_index]
         alpha_t, sigma_t = self._sigma_to_alpha_sigma_t(sigma)
 
-        print("sigma_t ==>", self.step_index, sigma, sigma_t, alpha_t, sample.shape, model_output.shape)
+        # print("sigma_t ==>", self.step_index, sigma, sigma_t, alpha_t, sample.shape, model_output.shape)
         if self.predict_x0:
             if self.config.prediction_type == "flow_prediction":
                 sigma_t = self.sigmas[self.step_index]
@@ -328,7 +328,7 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
 
             if self.config.thresholding:
                 x0_pred = self._threshold_sample(x0_pred)
-            print("self.config.thresholding", self.config.thresholding)
+
             return x0_pred
         else:
             if self.config.prediction_type == "flow_prediction":
@@ -687,16 +687,14 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         if self.step_index is None:
             self._init_step_index(timestep)
 
-        print("self.step_index ==> ", self.step_index)
-
         use_corrector = (
             self.step_index > 0 and
             self.step_index - 1 not in self.disable_corrector and
             self.last_sample is not None  # pyright: ignore
         )
 
-        model_output_convert = self.convert_model_output(model_output, sample=sample)
-
+        model_output_convert = self.convert_model_output(
+            model_output, sample=sample)
         if use_corrector:
             sample = self.multistep_uni_c_bh_update(
                 this_model_output=model_output_convert,
@@ -737,7 +735,7 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         self._step_index += 1  # pyright: ignore
 
         if not return_dict:
-            return (prev_sample, model_output_convert)
+            return (prev_sample,)
 
         return SchedulerOutput(prev_sample=prev_sample)
 
